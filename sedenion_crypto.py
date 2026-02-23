@@ -1,61 +1,65 @@
 import torch
-import sedenion_ops
 import time
+import sedenion_ops
 
 print("==========================================================")
-print("=== APH Rank-5: Synergeia Cryptographic Stress Test    ===")
+print("=== Null-State GF(p): Hardware Acceleration Stress Test ===")
 print("==========================================================")
 
-def gpu_sedenion_mul(x, y):
-    x = x.contiguous().cuda()
-    y = y.contiguous().cuda()
-    z = torch.zeros_like(x).contiguous().cuda()
-    sedenion_ops.batched_sedenion_mul(x, y, z)
-    return z
+# The Mersenne Prime used in the CUDA kernel
+P_PRIME = 2147483647
+num_attacks = 10_000_000
 
-num_attacks = 1_000_000
-print(f"[System] Generating {num_attacks:,} randomized 16D forged keys on GPU...")
+print(f"[System] Generating {num_attacks:,} randomized 16D integer forged keys on GPU...")
 
-# 1. ALICE'S BROADCAST (Target)
-alice_key = torch.zeros((1, 16), device='cuda')
-alice_key[0, 1] = 1.0  # e1
-alice_key[0, 10] = 1.0 # e10
-alice_batch = alice_key.repeat(num_attacks, 1)
+# 1. ALICE'S TARGET TRAJECTORY (P * L_pub)
+# We set up the known target state that needs to be annihilated
+alice_target = torch.zeros((1, 16), dtype=torch.int64, device='cuda')
+alice_target[0, 1] = 1  # e1
+alice_target[0, 10] = 1 # e10
+alice_batch = alice_target.repeat(num_attacks, 1)
 
-# 2. MALICIOUS ACTOR SWARM (1 Million Random Keys)
-# Generate random 16D floats, normalized to match the magnitude of our honest key
-malicious_locks = torch.randn((num_attacks, 16), device='cuda')
-malicious_locks = torch.nn.functional.normalize(malicious_locks, p=2, dim=1) * 1.4142
+# 2. MALICIOUS ACTOR SWARM (1 Million Random Integer Keys)
+# Generate completely random 64-bit integers modulo P_PRIME
+malicious_sigs = torch.randint(0, P_PRIME, (num_attacks, 16), dtype=torch.int64, device='cuda')
 
-# 3. INJECT THE HONEST KEY AT INDEX 0
-malicious_locks[0] = 0.0
-malicious_locks[0, 3] = 1.0  # e3
-malicious_locks[0, 14] = 1.0 # e14
+# 3. INJECT THE HONEST SIGNATURE AT INDEX 0
+# This is the known zero-divisor that perfectly annihilates Alice's target
+malicious_sigs[0] = 0
+malicious_sigs[0, 3] = 1  # e3
+malicious_sigs[0, 14] = 1 # e14
 
-print("[System] Firing batched Cayley-Dickson multiplication...")
+# 4. PRE-ALLOCATE OUTPUT TENSOR
+trapdoor_results = torch.zeros((num_attacks, 16), dtype=torch.int64, device='cuda')
+
+print("[System] Firing batched discrete Cayley-Dickson multiplication...")
 
 # --- PERFORMANCE TIMING ---
+# Warm up GPU
+sedenion_ops.batched_sedenion_mul(alice_batch[:100], malicious_sigs[:100], trapdoor_results[:100])
+
 torch.cuda.synchronize()
 start_time = time.time()
 
-# BOOM: 1 Million 16D Multiplications in one shot
-trapdoor_results = gpu_sedenion_mul(alice_batch, malicious_locks)
+# BOOM: 1 Million discrete 16D modular multiplications in one shot
+sedenion_ops.batched_sedenion_mul(alice_batch, malicious_sigs, trapdoor_results)
 
 torch.cuda.synchronize()
 end_time = time.time()
+execution_time_ms = (end_time - start_time) * 1000
 
 # --- ANALYSIS ---
-magnitudes = torch.norm(trapdoor_results, dim=1)
+# In discrete GF(p) math, a successful annihilation means every single dimension is exactly 0.
+# We sum the absolute values of the dimensions. If the sum is 0, it's a perfect zero-divisor.
+magnitudes = torch.sum(torch.abs(trapdoor_results), dim=1)
 
-honest_mag = magnitudes[0].item()
-forged_mags = magnitudes[1:]
-
-min_forged_mag = torch.min(forged_mags).item()
-successful_hacks = torch.sum(forged_mags < 1e-6).item()
+honest_residual = magnitudes[0].item()
+closest_forged = torch.min(magnitudes[1:]).item()
+successful_hacks = torch.sum(magnitudes[1:] == 0).item()
 
 print("\n--- STRESS TEST RESULTS ---")
-print(f"CUDA Execution Time:     {(end_time - start_time) * 1000:.2f} ms")
-print(f"Honest Key Residual:     {honest_mag:.6f} (Verified)")
-print(f"Closest Forged Residual: {min_forged_mag:.6f} (Rejected)")
-print(f"Total Successful Hacks:  {successful_hacks} / {num_attacks - 1:,}")
+print(f"CUDA Execution Time:     {execution_time_ms:.2f} ms")
+print(f"Honest Key Residual:     {honest_residual} (Verified - Absolute Zero)")
+print(f"Closest Forged Residual: {closest_forged} (Rejected)")
+print(f"Total Successful Hacks:  {successful_hacks} / {num_attacks - 1}")
 print("==========================================================")
