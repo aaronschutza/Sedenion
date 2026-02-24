@@ -20,6 +20,7 @@ use p3_symmetric::{CompressionFunctionFromHasher, SerializingHasher32};
 use p3_uni_stark::StarkConfig;
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_merkle_tree::FieldMerkleTreeMmcs;
+use sha2::{Sha256, Digest};
 
 // ============================================================================
 // OCTONION ALGEBRA OVER F_P
@@ -268,6 +269,25 @@ where
     verify(config, air, challenger, proof, public_values)
 }
 
+// ============================================================================
+// CRYPTOGRAPHIC SEEDING
+// ============================================================================
+pub fn hash_to_sedenion(seed_string: &str) -> Sedenion<BabyBear> {
+    let mut hasher = Sha256::new();
+    hasher.update(seed_string.as_bytes());
+    let result = hasher.finalize();
+    
+    let mut state = [BabyBear::zero(); 16];
+    for i in 0..16 {
+        // Take 2 bytes for each dimension (16-bit integer fits safely in 31-bit BabyBear field)
+        let bytes = [result[i * 2], result[i * 2 + 1]];
+        let val = u16::from_be_bytes(bytes) as u32;
+        state[i] = BabyBear::from_canonical_u32(val);
+    }
+    
+    Sedenion(state)
+}
+
 pub fn test_e2e_proof() {
     println!("=================================================================");
     println!("=== S-VDF: Sedenionic STARK Engine (Degree 3) ===");
@@ -277,13 +297,15 @@ pub fn test_e2e_proof() {
     #[cfg(debug_assertions)]
     let pow_steps = 12;
     #[cfg(not(debug_assertions))]
-    let pow_steps = 22; // Use 18 for faster benchmarking; handles easily
+    let pow_steps = 22;
     let t_steps = 1 << pow_steps;
     
-    let mut initial_seed = [BabyBear::zero(); 16];
-    initial_seed[0] = BabyBear::from_canonical_u32(7);
-    initial_seed[15] = BabyBear::from_canonical_u32(1337);
-    let seed_vals = Sedenion(initial_seed);
+    // Generate a DENSE 16-dimensional starting state
+    let seed_phrase = "Genesis Block Hash 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
+    let seed_vals = hash_to_sedenion(seed_phrase);
+    
+    println!("[System] Initial Seed Phrase: '{}'", seed_phrase);
+    println!("[System] Derived Dense Sedenion [0..3]: {:?}", &seed_vals.0[0..4]);
 
     // 2. Evaluation Phase
     println!("[Step 1] EVALUATOR: Grinding Non-Associative Chaotic Walk (T={})...", t_steps);
