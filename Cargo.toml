@@ -1,0 +1,55 @@
+[package]
+name = "sed_research"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand = "0.8"
+rand_distr = "0.4"
+sha2 = "0.10"
+# Core Plonky3 Arithmetization & Field Math
+p3-field = "0.1.0"
+p3-goldilocks = "0.1.0"
+p3-matrix = "0.1.0"
+p3-air = "0.1.0"
+p3-dft = "0.1.0"
+p3-keccak = "0.1.0"
+p3-merkle-tree = "0.1.0"
+p3-baby-bear = "0.1.0"
+
+# Proof System Components
+p3-uni-stark = "0.1.0"
+p3-fri = "0.1.0"
+p3-commit = "0.1.0"
+p3-challenger = "0.1.0"
+p3-symmetric = "0.1.0"
+
+# Cryptographic Primitives
+p3-poseidon2 = "0.1.0"
+p3-keccak-air = "0.1.0"
+
+# Utilities & Performance
+itertools = "0.12"
+tracing = "0.1"
+# Critical fix: Use the Plonky3-specific wrapper for Rayon
+p3-maybe-rayon = { version = "0.1.0", features = ["parallel"] }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[features]
+default = ["parallel"]
+# Propagate parallelism only through the correctly named p3 crate
+parallel = ["p3-maybe-rayon/parallel"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
